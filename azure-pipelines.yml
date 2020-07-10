@@ -1,0 +1,206 @@
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: sonarsource-build-variables
+
+resources:
+  repositories:
+    - repository: commonTemplates
+      type: git
+      name: pipelines-yaml-templates
+      ref:  refs/tags/v1.0.9
+
+stages:
+- template: stage-with-burgr-notifications.yml@commonTemplates
+  parameters:
+    burgrName: 'build'
+    burgrType: 'build'
+    stageName: 'build'
+    stageDisplayName: Build and stage to repox
+    jobs:
+    - job: build
+      displayName: Build and stage to repox
+      variables:
+        MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+        MAVEN_OPTS: '-Xmx3072m -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+        commonMavenArguments: -B -Pdeploy-sonarsource -Dmaven.test.skip=true
+        fixedBranch: $[replace(variables['Build.SourceBranch'], 'refs/heads/', '')]
+      steps:
+      - checkout: self
+        fetchDepth: 1
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+      - task: DownloadSecureFile@1
+        displayName: 'Download Maven settings'
+        name: mavenSettings
+        inputs:
+          secureFile: 'maven-settings.xml'
+      - template: update-maven-version-steps.yml
+        parameters:
+          mavenSettingsFilePath: $(mavenSettings.secureFilePath)
+      - task: Maven@3
+        displayName: 'Run Maven deploy'
+        env:
+          ARTIFACTORY_DEPLOY_USERNAME: $(ARTIFACTORY_DEPLOY_USERNAME)
+          ARTIFACTORY_DEPLOY_PASSWORD: $(ARTIFACTORY_DEPLOY_PASSWORD)
+          GIT_SHA1: $(Build.SourceVersion)
+          GITHUB_BRANCH: $(fixedBranch)
+        inputs:
+          goals: 'deploy'
+          options: >-
+            $(commonMavenArguments)
+            --settings $(mavenSettings.secureFilePath)
+          publishJUnitResults: false
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: '1.11'
+          mavenOptions: $(MAVEN_OPTS)
+      - bash: git checkout .
+        name: revertPomChanges
+        displayName: Revert changes made to pom.xml to not break cache feature
+- template: stage-with-burgr-notifications.yml@commonTemplates
+  parameters:
+    burgrName: 'validate'
+    burgrType: 'validate'
+    stageName: 'validate'
+    stageDisplayName: Run UTs and trigger SonarQube analysis
+    jobs:
+    - job: test_windows
+      displayName: Run unit tests on Windows
+      pool:
+        vmImage: 'windows-latest'
+      variables:
+        MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+        MAVEN_OPTS: '-Xmx3072m -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+      steps:
+      - checkout: self
+        fetchDepth: 1
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+      - task: DownloadSecureFile@1
+        displayName: 'Download Maven settings'
+        name: mavenSettings
+        inputs:
+          secureFile: 'maven-settings.xml'
+      - task: NodeTool@0
+        inputs:
+          # use the same version as in the Maven frontend plugin
+          versionSpec: 'v11.12.0'
+      - task: Maven@3
+        displayName: 'Run Maven verify'
+        inputs:
+          goals: 'verify'
+          options: '-B --settings $(mavenSettings.secureFilePath)'
+          publishJUnitResults: true
+          testResultsFiles: '**/surefire-reports/TEST-*.xml'
+          testRunTitle: 'UTs on Windows'
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: '1.11'
+          mavenOptions: $(MAVEN_OPTS)
+    - job: sonarqube
+      displayName: SonarQube analysis on Next
+      variables:
+        MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+        MAVEN_OPTS: '-Xmx3072m -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+      steps:
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+      - task: DownloadSecureFile@1
+        displayName: 'Download Maven settings'
+        name: mavenSettings
+        inputs:
+          secureFile: 'maven-settings.xml'
+      - template: prepare-sq-analysis-steps.yml
+      - task: Maven@3
+        inputs:
+          goals: 'verify'
+          options: -B --settings $(mavenSettings.secureFilePath) -Pcoverage
+          publishJUnitResults: false
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: '1.11'
+          mavenOptions: $(MAVEN_OPTS)
+          sonarQubeRunAnalysis: true
+          sqMavenPluginVersionChoice: 'latest'
+- template: stage-with-burgr-notifications.yml@commonTemplates
+  parameters:
+    burgrName: 'qa'
+    burgrType: 'qa'
+    stageName: 'qa'
+    stageDisplayName: Run ITs
+    stageDependencies: build
+    jobs:
+    - job: its
+      displayName: Run ITs
+      strategy:
+        matrix:
+          Latest:
+            SQ_VERSION: 'LATEST_RELEASE'
+            JDKVersion: '1.11'
+      variables:
+        MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+        MAVEN_OPTS: '-Xmx3072m -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+      steps:
+      - checkout: self
+        fetchDepth: 1
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+      - task: DownloadSecureFile@1
+        displayName: 'Download Maven settings'
+        name: mavenSettings
+        inputs:
+          secureFile: 'maven-settings.xml'
+      - template: update-maven-version-steps.yml
+        parameters:
+          mavenSettingsFilePath: $(mavenSettings.secureFilePath)
+      - task: Maven@3
+        displayName: 'Run Maven ITs for SQ $(SQ_VERSION)'
+        env:
+          ARTIFACTORY_QA_READER_USERNAME: $(ARTIFACTORY_QA_READER_USERNAME)
+          ARTIFACTORY_QA_READER_PASSWORD: $(ARTIFACTORY_QA_READER_PASSWORD)
+          # For Orchestrator
+          ARTIFACTORY_API_KEY: $(ARTIFACTORY_API_KEY)
+          GITHUB_TOKEN: $(GITHUB_TOKEN)
+          # SonarLintDaemonInstaller
+          MAVEN_LOCAL_REPOSITORY: $(MAVEN_CACHE_FOLDER)
+        inputs:
+          goals: 'verify'
+          mavenPomFile: 'its/pom.xml'
+          options: '-B --settings $(mavenSettings.secureFilePath) -Denable-repo=qa -Dsonar.runtimeVersion=$(SQ_VERSION)'
+          publishJUnitResults: true
+          testResultsFiles: '**/surefire-reports/TEST-*.xml'
+          testRunTitle: 'ITs $(SQ_VERSION)'
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: $(JDKVersion)
+          mavenOptions: $(MAVEN_OPTS)
+      - bash: git checkout .
+        name: revertPomChanges
+        displayName: Revert changes made to pom.xml to not break cache feature
+- template: promote-stage.yml@commonTemplates
+  parameters:
+    stageDependencies:
+    - validate
+    - qa
