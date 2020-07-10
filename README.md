@@ -2,7 +2,7 @@ SonarLint Daemon
 =========================
 SonarLint gRPC daemon (used by SonarLint for Visual Studio)
 
-[![Build Status](https://sonarsource.visualstudio.com/DotNetTeam%20Project/_apis/build/status/sonarlint/SonarLint%20Daemon?branchName=master)](https://sonarsource.visualstudio.com/DotNetTeam%20Project/_build/latest?definitionId=66&branchName=master)
+[![Build Status](https://dev.azure.com/sonarsource/DotNetTeam%20Project/_apis/build/status/sonarlint/SonarLint%20Daemon?branchName=master)](https://dev.azure.com/sonarsource/DotNetTeam%20Project/_build/latest?definitionId=113&branchName=master)
 [![Quality Gate Status](https://next.sonarqube.com/sonarqube/api/project_badges/measure?project=org.sonarsource.sonarlint.daemon%3Asonarlint-daemon-parent&metric=alert_status)](https://next.sonarqube.com/sonarqube/dashboard?id=org.sonarsource.sonarlint.daemon%3Asonarlint-daemon-parent)
 
 Have Question or Feedback?
