@@ -1,6 +1,6 @@
 /*
  * SonarLint Daemon - ITs - Tests
- * Copyright (C) 2016-2020 SonarSource SA
+ * Copyright (C) 2016-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -50,12 +50,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
-import org.sonar.wsclient.services.PropertyCreateQuery;
-import org.sonar.wsclient.user.UserParameters;
 import org.sonarqube.ws.client.HttpConnector;
 import org.sonarqube.ws.client.WsClient;
 import org.sonarqube.ws.client.WsClientFactories;
-import org.sonarqube.ws.client.permission.RemoveGroupWsRequest;
+import org.sonarqube.ws.client.users.CreateRequest;
 import org.sonarsource.sonarlint.daemon.proto.ConnectedSonarLintGrpc;
 import org.sonarsource.sonarlint.daemon.proto.ConnectedSonarLintGrpc.ConnectedSonarLintBlockingStub;
 import org.sonarsource.sonarlint.daemon.proto.SonarlintDaemon.ConnectedAnalysisReq;
@@ -106,13 +104,9 @@ public class ConnectedDaemonTest {
   @BeforeClass
   public static void prepare() throws Exception {
     adminWsClient = newAdminWsClient(ORCHESTRATOR);
-    ORCHESTRATOR.getServer().getAdminWsClient().create(new PropertyCreateQuery("sonar.forceAuthentication", "true"));
     sonarUserHome = temp.newFolder().toPath();
 
-    removeGroupPermission("anyone", "scan");
-
-    ORCHESTRATOR.getServer().adminWsClient().userClient()
-      .create(UserParameters.create().login(SONARLINT_USER).password(SONARLINT_PWD).passwordConfirmation(SONARLINT_PWD).name("SonarLint"));
+    adminWsClient.users().create(new CreateRequest().setLogin(SONARLINT_USER).setPassword(SONARLINT_PWD).setName("SonarLint"));
 
     ORCHESTRATOR.getServer().provisionProject(PROJECT_KEY_JAVASCRIPT, "Sample Javascript");
     ORCHESTRATOR.getServer().associateProjectToQualityProfile(PROJECT_KEY_JAVASCRIPT, "js", "SonarLint IT Javascript");
@@ -253,7 +247,7 @@ public class ConnectedDaemonTest {
   }
 
   private static class LogCollector extends ClientCall.Listener<LogEvent> {
-    private List<LogEvent> list = Collections.synchronizedList(new LinkedList<LogEvent>());
+    private final List<LogEvent> list = Collections.synchronizedList(new LinkedList<LogEvent>());
 
     @Override
     public void onMessage(LogEvent log) {
@@ -286,13 +280,4 @@ public class ConnectedDaemonTest {
     }
   }
 
-  private static void removeGroupPermission(String groupName, String permission) {
-    if (ORCHESTRATOR.getServer().version().isGreaterThanOrEquals(5, 2)) {
-      adminWsClient.permissions().removeGroup(new RemoveGroupWsRequest()
-        .setGroupName(groupName)
-        .setPermission(permission));
-    } else {
-      // TODO
-    }
-  }
 }
